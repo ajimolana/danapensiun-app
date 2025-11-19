@@ -744,7 +744,7 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
             else:
                 interpretation_nc = f"Pada usia {x_now_state} saat ini, iuran tahunan **AAN** ({format_rp(NC_aan_x_now)}) **lebih rendah** daripada iuran EAN ({format_rp(NC_ilp_now)})."
 
-            st.markdown("Berikut adalah kesimpulan utama dari perbandingan kedua metode, sesuai dengan analisis pada draf penelitian:")
+            st.markdown("Berikut adalah kesimpulan utama dari perbandingan kedua METODE:")
             st.markdown(f"* **Pola Iuran:** {interpretation_graph}")
             st.markdown(f"* **Total Biaya (Nilai Akhir):** {interpretation_na}")
             st.markdown(f"* **Kewajiban Saat Ini (Usia {x_now_state}):** {interpretation_al}")
