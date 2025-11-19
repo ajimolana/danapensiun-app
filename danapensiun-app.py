@@ -11,7 +11,7 @@ st.set_page_config(layout="wide", page_title="Kalkulator Dana Pensiun Aktuaria",
 
 # --- 1. INISIALISASI PARAMETER DEFAULT ---
 if "widget_gender" not in st.session_state:
-    st.session_state.widget_gender = "Laki-Laki"
+    st.session_state.widget_gender = "Perempuan"
     st.session_state.widget_entry_age = 30
     st.session_state.widget_valuation_age = 40
     st.session_state.widget_retirement_age = 65
