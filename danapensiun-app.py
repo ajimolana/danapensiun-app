@@ -868,29 +868,32 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
 
         st.divider()
         
-        # --- 5. NILAI AKHIR ---
+# --- 5. NILAI AKHIR ---
         st.subheader("5. Nilai Akhir Total Iuran (NA) di Usia Pensiun")
         col1_na, col2_na = st.columns(2)
-        
         with col1_na:
             st.metric("Hasil NA EAN", format_rp(NA_ean_total), help="Akumulasi iuran EAN.")
             with st.expander("Lihat Detail Formula NA EAN"):
                 st.markdown("**Metode Entry Age Normal**")
-                st.latex(r"NA = \sum_{t=e}^{r-1} NC_t \times (1+i)^{r-t}")
-                st.latex(rf"^{{EAN}}NA = \sum_{{t={x_entry_state}}}^{{{r_state-1}}} {{}}^{{EAN}}(NC)_{{t}} (1+{format_latex_num(i_state)})^{{{r_state}-t}}")
-                st.latex(rf"^{{EAN}}NA = {{}}^{{EAN}}(NC)_{{{x_entry_state}}}(1+{format_latex_num(i_state)})^{{{r_state-x_entry_state}}} + {{}}^{{EAN}}(NC)_{{{x_entry_state+1}}}(1+{format_latex_num(i_state)})^{{{r_state}-(x_entry_state+1)}} + \dots + {{}}^{{EAN}}(NC)_{{{r_state-1}}}(1+{format_latex_num(i_state)})^1")
-                st.latex(rf"^{{EAN}}NA = {format_calc(NA_ean_term_first)} + {format_calc(NA_ean_term_second)} + \dots + {format_calc(NA_ean_term_last)}")
-                st.latex(rf"^{{EAN}}NA = {format_calc(NA_ean_total)}")
+                st.latex(r"{}^{EAN}NA = \sum_{x=e}^{r-1} \, {}^{EAN}(NC)_x (1+i)^{r-x}")
+                st.latex(rf"{{}}^{{EAN}}NA = \sum_{{x={x_entry_state}}}^{{{r_state-1}}} \, {{}}^{{EAN}}(NC)_x (1 + {format_latex_num(i_state)})^{{{r_state}-x}}")
+                term1_power = r_state - x_entry_state
+                term2_power = r_state - (x_entry_state + 1)
+                st.latex(rf"{{}}^{{EAN}}NA = {{}}^{{EAN}}(NC)_{{{x_entry_state}}} (1+{format_latex_num(i_state)})^{{{term1_power}}} + {{}}^{{EAN}}(NC)_{{{x_entry_state+1}}} (1+{format_latex_num(i_state)})^{{{term2_power}}} + \dots")
+                st.latex(rf"{{}}^{{EAN}}NA = {format_calc(NA_ean_term_first)} + {format_calc(NA_ean_term_second)} + \dots + {format_calc(NA_ean_term_last)}")
+                st.latex(rf"{{}}^{{EAN}}NA = {format_calc(NA_ean_total)}")
         
         with col2_na:
             st.metric("Hasil NA AAN", format_rp(NA_aan_total), help="Akumulasi iuran AAN.")
             with st.expander("Lihat Detail Formula NA AAN"):
                 st.markdown("**Metode Attained Age Normal**")
-                st.latex(r"NA = \sum_{t=e}^{r-1} NC_t \times (1+i)^{r-t}")
-                st.latex(rf"^{{AAN}}NA = \sum_{{t={x_entry_state}}}^{{{r_state-1}}} {{}}^{{AAN}}(NC)_{{t}} (1+{format_latex_num(i_state)})^{{{r_state}-t}}")
-                st.latex(rf"^{{AAN}}NA = {{}}^{{AAN}}(NC)_{{{x_entry_state}}}(1+{format_latex_num(i_state)})^{{{r_state-x_entry_state}}} + {{}}^{{AAN}}(NC)_{{{x_entry_state+1}}}(1+{format_latex_num(i_state)})^{{{r_state}-(x_entry_state+1)}} + \dots + {{}}^{{AAN}}(NC)_{{{r_state-1}}}(1+{format_latex_num(i_state)})^1")
-                st.latex(rf"^{{AAN}}NA = {format_calc(NA_aan_term_first)} + {format_calc(NA_aan_term_second)} + \dots + {format_calc(NA_aan_term_last)}")
-                st.latex(rf"^{{AAN}}NA = {format_calc(NA_aan_total)}")
+                st.latex(r"{}^{AAN}NA = \sum_{x=e}^{r-1} \, {}^{AAN}(NC)_x (1+i)^{r-x}")
+                st.latex(rf"{{}}^{{AAN}}NA = \sum_{{x={x_entry_state}}}^{{{r_state-1}}} \, {{}}^{{AAN}}(NC)_x (1 + {format_latex_num(i_state)})^{{{r_state}-x}}")
+                term1_power = r_state - x_entry_state
+                term2_power = r_state - (x_entry_state + 1)
+                st.latex(rf"{{}}^{{AAN}}NA = {{}}^{{AAN}}(NC)_{{{x_entry_state}}} (1+{format_latex_num(i_state)})^{{{term1_power}}} + {{}}^{{AAN}}(NC)_{{{x_entry_state+1}}} (1+{format_latex_num(i_state)})^{{{term2_power}}} + \dots")
+                st.latex(rf"{{}}^{{AAN}}NA = {format_calc(NA_aan_term_first)} + {format_calc(NA_aan_term_second)} + \dots + {format_calc(NA_aan_term_last)}")
+                st.latex(rf"{{}}^{{AAN}}NA = {format_calc(NA_aan_total)}")
 
     # --- ISI TAB TABEL KOMUTASI ---
     with tab_commutation:
