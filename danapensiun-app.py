@@ -879,7 +879,8 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
                 st.latex(rf"{{}}^{{EAN}}NA = \sum_{{x={x_entry_state}}}^{{{r_state-1}}} \, {{}}^{{EAN}}(NC)_x (1 + {format_latex_num(i_state)})^{{{r_state}-x}}")
                 term1_power = r_state - x_entry_state
                 term2_power = r_state - (x_entry_state + 1)
-                st.latex(rf"{{}}^{{EAN}}NA = {{}}^{{EAN}}(NC)_{{{x_entry_state}}} (1+{format_latex_num(i_state)})^{{{term1_power}}} + {{}}^{{EAN}}(NC)_{{{x_entry_state+1}}} (1+{format_latex_num(i_state)})^{{{term2_power}}} + \dots")
+                x_last = r_state - 1 # Usia terakhir sebelum pensiun
+                st.latex(rf"{{}}^{{EAN}}NA = {{}}^{{EAN}}(NC)_{{{x_entry_state}}} (1+{format_latex_num(i_state)})^{{{term1_power}}} + {{}}^{{EAN}}(NC)_{{{x_entry_state+1}}} (1+{format_latex_num(i_state)})^{{{term2_power}}} + \dots + {{}}^{{EAN}}(NC)_{{{x_last}}} (1+{format_latex_num(i_state)})^{{1}}")
                 st.latex(rf"{{}}^{{EAN}}NA = {format_calc(NA_ean_term_first)} + {format_calc(NA_ean_term_second)} + \dots + {format_calc(NA_ean_term_last)}")
                 st.latex(rf"{{}}^{{EAN}}NA = {format_calc(NA_ean_total)}")
         
@@ -891,7 +892,8 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
                 st.latex(rf"{{}}^{{AAN}}NA = \sum_{{x={x_entry_state}}}^{{{r_state-1}}} \, {{}}^{{AAN}}(NC)_x (1 + {format_latex_num(i_state)})^{{{r_state}-x}}")
                 term1_power = r_state - x_entry_state
                 term2_power = r_state - (x_entry_state + 1)
-                st.latex(rf"{{}}^{{AAN}}NA = {{}}^{{AAN}}(NC)_{{{x_entry_state}}} (1+{format_latex_num(i_state)})^{{{term1_power}}} + {{}}^{{AAN}}(NC)_{{{x_entry_state+1}}} (1+{format_latex_num(i_state)})^{{{term2_power}}} + \dots")
+                x_last = r_state - 1
+                st.latex(rf"{{}}^{{AAN}}NA = {{}}^{{AAN}}(NC)_{{{x_entry_state}}} (1+{format_latex_num(i_state)})^{{{term1_power}}} + {{}}^{{AAN}}(NC)_{{{x_entry_state+1}}} (1+{format_latex_num(i_state)})^{{{term2_power}}} + \dots + {{}}^{{AAN}}(NC)_{{{x_last}}} (1+{format_latex_num(i_state)})^{{1}}")
                 st.latex(rf"{{}}^{{AAN}}NA = {format_calc(NA_aan_term_first)} + {format_calc(NA_aan_term_second)} + \dots + {format_calc(NA_aan_term_last)}")
                 st.latex(rf"{{}}^{{AAN}}NA = {format_calc(NA_aan_total)}")
 
