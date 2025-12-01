@@ -24,7 +24,7 @@ if "widget_gender" not in st.session_state:
 # --- Fungsi Reset ---
 def reset_defaults():
     """Mengembalikan semua input ke nilai defaultnya."""
-    st.session_state.widget_gender = "Laki-Laki"
+    st.session_sqtate.widget_gender = "Laki-Laki"
     st.session_state.widget_entry_age = 30
     st.session_state.widget_valuation_age = 40
     st.session_state.widget_retirement_age = 65
@@ -912,6 +912,17 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
                 'Dx': '{:,.2f}',
                 'Nx': '{:,.2f}'
             }), use_container_width=True, height=600)
+
+            st.markdown(r"""
+            Keterangan:
+            * **$x$**: Usia peserta dalam tahun.
+            * **$q_x$**: Peluang seseorang berusia $x$ akan meninggal dalam 1 tahun ke depan.
+            * **$p_x$**: Peluang seseorang berusia $x$ akan tetap hidup selama 1 tahun ke depan.
+            * **$l_x$**: Banyaknya orang yang hidup pada usia $x$.
+            * **$D_x$**: Komutasi nilai sekarang dari $l_x$.
+            * **$N_x$**: Komutasi akumulasi nilai $N$ pada saat usia $x$.
+            """)
+
         else:
             st.warning("Tabel komutasi belum tersedia.")
 
