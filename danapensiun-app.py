@@ -917,4 +917,5 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
 
 else:
     st.error("❌ Gagal memuat data mortalitas internal. Perhitungan tidak dapat dilanjutkan.")
+
     st.warning("Pastikan data TMI sudah dimuat dengan benar di dalam skrip Python.")
