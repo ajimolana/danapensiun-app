@@ -899,7 +899,31 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
 
     # --- ISI TAB TABEL KOMUTASI ---
     with tab_commutation:
-        st.header("🧮 Tabel Komutasi Lengkap")
+        with st.expander("ℹ️ Penjelasan Dataset"):
+            st.markdown("""
+            Dataset yang disajikan dalam tabel ini dibangun berdasarkan **Tabel Mortalita Indonesia (TMI) 2023** yang berfungsi sebagai standar acuan probabilitas kematian ($q_x$). Data $q_x$ bersifat statis dan spesifik untuk setiap jenis kelamin yang dipilih.
+            
+            Berbeda dengan data mentah tersebut, kolom-kolom fungsi komutasi ($l_x, D_x, N_x$) merupakan hasil perhitungan algoritma sistem yang bersifat dinamis. Nilai-nilai ini dihitung secara *real-time* dengan menggabungkan probabilitas mortalita dari TMI dan asumsi **Suku Bunga ($i$)** yang diinput pada parameter simulasi. Oleh karena itu, setiap perubahan pada tingkat suku bunga akan secara otomatis memperbarui faktor diskonto, yang kemudian mengubah nilai $D_x$ dan $N_x$ di seluruh tabel.
+            """)
+
+        with st.expander("📝 Keterangan"):
+            st.markdown(r"""
+            Berikut adalah definisi dan formula matematika untuk variabel yang digunakan dalam tabel ini:
+
+            * **$x$ (Usia):** Usia peserta dalam tahun berjalan.
+            * **$q_x$ (Peluang Meninggal):** Probabilitas seseorang berusia $x$ akan meninggal dalam 1 tahun ke depan (Data TMI).
+            * **$p_x$ (Peluang Hidup):** Probabilitas seseorang berusia $x$ akan tetap hidup hingga usia $x+1$.
+                $$p_x = 1 - q_x$$
+            * **$l_x$ (Jumlah Orang Hidup):** Simulasi jumlah orang yang hidup pada usia $x$ dari kohort awal ($l_0=100.000$). Nilai ini dihitung berantai dari populasi tahun sebelumnya dikali peluang hidupnya.
+                $$l_x = l_{x-1} \times p_{x-1}$$
+            * **$D_x$ (Fungsi Komutasi Diskonto):** Nilai sekarang dari $l_x$ yang telah didiskon dengan suku bunga ($v$).
+                $$D_x = v^x \cdot l_x$$
+            * **$N_x$ (Akumulasi Komutasi):** Penjumlahan nilai $D_x$ dari usia $x$ hingga usia akhir tabel ($\omega$). Digunakan untuk menghitung anuitas.
+                $$N_x = D_x + D_{x+1} + \dots + D_{\omega}$$
+            """)
+
+
+        st.header("🧮 Tabel Komutasi")
         st.caption(f"Tabel ini menunjukkan fungsi komutasi dasar (lx, Dx, Nx) yang dihitung berdasarkan TMI 2023 untuk **{jenis_kelamin_state}** dan suku bunga **{i_percent_state:.1f}%**.")
         if comm_table is not None and not comm_table.empty:
             cols_commutation = ['x', 'qx', 'px', 'lx', 'Dx', 'Nx']
@@ -912,17 +936,7 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
                 'Dx': '{:,.2f}',
                 'Nx': '{:,.2f}'
             }), use_container_width=True, height=600)
-
-            st.markdown(r"""
-            Keterangan:
-            * **$x$**: Usia peserta dalam tahun.
-            * **$q_x$**: Peluang seseorang berusia $x$ akan meninggal dalam 1 tahun ke depan.
-            * **$p_x$**: Peluang seseorang berusia $x$ akan tetap hidup selama 1 tahun ke depan.
-            * **$l_x$**: Banyaknya orang yang hidup pada usia $x$.
-            * **$D_x$**: Komutasi nilai sekarang dari $l_x$.
-            * **$N_x$**: Komutasi akumulasi nilai $N$ pada saat usia $x$.
-            """)
-
+                        
         else:
             st.warning("Tabel komutasi belum tersedia.")
 
