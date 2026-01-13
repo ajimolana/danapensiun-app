@@ -24,7 +24,7 @@ if "widget_gender" not in st.session_state:
 # --- Fungsi Reset ---
 def reset_defaults():
     """Mengembalikan semua input ke nilai defaultnya."""
-    st.session_sqtate.widget_gender = "Laki-Laki"
+    st.session_state.widget_gender = "Laki-Laki"
     st.session_state.widget_entry_age = 30
     st.session_state.widget_valuation_age = 40
     st.session_state.widget_retirement_age = 65
@@ -318,15 +318,7 @@ def build_commutation_table(df_raw_mortality, i, l0=100000):
 @st.cache_data
 def calculate_actuarial_values_excel_logic(comm_table, x_entry, x_now, r, i, k, gaji_masuk, s):
     '''
-    Menghitung nilai aktuaria dengan logika FINAL sesuai data Excel user:
-    
-    1. EAN (Entry Age Normal):
-       - NC: Dihitung di Usia Masuk (Level Cost).
-       - AL: Metode Rasio (Prospektif).
-       
-    2. AAN (Attained Age Normal) - Sesuai Pola CSV:
-       - NC: PVFB_entry / Anuitas_sisa (Mendanai beban awal di sisa waktu).
-       - AL: PVFB_x - PVFB_entry (Kewajiban adalah kenaikan PVFB di atas beban awal).
+    Menghitung nilai aktuaria dengan LOGIKA YANG BENAR untuk EAN (Basis Usia Masuk e).
     '''
     if comm_table is None or comm_table.empty:
          return {}, pd.DataFrame() 
@@ -341,23 +333,22 @@ def calculate_actuarial_values_excel_logic(comm_table, x_entry, x_now, r, i, k, 
     metrics = {}
     actuarial_data = []
     
-    # --- 2. Parameter Kunci ---
-    D_entry = get_D(x_entry)
-    N_entry = get_N(x_entry)
-    D_r = get_D(r)
-    N_r = get_N(r)
+    # --- 2. Parameter Kunci (e dan r) ---
+    D_entry = get_D(x_entry)  # De
+    N_entry = get_N(x_entry)  # Ne
+    D_r = get_D(r)            # Dr
+    N_r = get_N(r)            # Nr
 
-    # --- 3. Hitung PVFB Awal (Kunci Perhitungan) ---
-    # Gaji diproyeksikan: S_{r-1} = S_e * (1+s)^(r-e-1)
+    # --- 3. Hitung PVFB Awal (PVFB_e) ---
+    # S_{r-1} = S_e * (1+s)^(r-e-1)
     Sr_minus_1 = ((Decimal(1) + s)**(r - x_entry - 1)) * gaji_masuk
     metrics['Sr_minus_1'] = Sr_minus_1
     
-    # Manfaat Pensiun
+    # B_r = k * (r - e) * S_{r-1}
     B_r = k * Decimal(r - x_entry) * Sr_minus_1
     metrics['B_r'] = B_r
     
-    # PVFB pada Usia Masuk (PVFB_e)
-    # Ini adalah konstanta penting untuk kedua metode (EAN & AAN versi Excel ini)
+    # PVFB_e = Br * (Dr / De)
     if D_entry > 0:
         PVFB_at_entry = B_r * (D_r / D_entry)
     else:
@@ -365,66 +356,69 @@ def calculate_actuarial_values_excel_logic(comm_table, x_entry, x_now, r, i, k, 
         
     metrics['PVFB_entry_AAN'] = PVFB_at_entry 
 
-    # --- 4. HITUNG NC EAN (FIXED) ---
-    # Rumus: PVFB_e / Anuitas_e
-    if D_entry > 0:
-        anuitas_entry = (N_entry - N_r) / D_entry
-        # Implementasi rumus gambar user (PVFB_x * Dx/De ...) pada x=e hasilnya sama dengan ini:
-        if anuitas_entry > 0:
-            NC_EAN_FIXED = PVFB_at_entry / anuitas_entry
-        else:
-            NC_EAN_FIXED = Decimal(0)
+    # --- 4. HITUNG NC EAN (PERBAIKAN UTAMA: PAKAI De) ---
+    # Rumus Draf Eq (14): NC = PVFB_e * (De / (Ne - Nr))
+    # Pembagi (Anuitas di usia e) = (Ne - Nr) / De
+    
+    pembilang_annuitas = N_entry - N_r
+    
+    if D_entry > 0 and pembilang_annuitas != 0:
+        # Ini bentuk lain dari PVFB_e / a_ddot_e
+        # Sama dengan: PVFB_e * (De / (Ne - Nr))
+        NC_EAN_FIXED = PVFB_at_entry * (D_entry / pembilang_annuitas)
     else:
         NC_EAN_FIXED = Decimal(0)
 
     # --- 5. LOOP PERHITUNGAN TAHUNAN ---
+
     for x_loop in range(x_entry, r):
-        
         D_x = get_D(x_loop)
         N_x = get_N(x_loop)
-        
         # Variabel Dinamis Tahun Berjalan
         if D_x > 0:
             PVFB_x = B_r * (D_r / D_x)
-            anuitas_x_term = (N_x - N_r) / D_x
+            anuitas_x_term = (N_x - N_r) / D_x # a_ddot_{x:r-x|}
         else:
             PVFB_x = Decimal(0)
             anuitas_x_term = Decimal(0)
-        
+
         # ==========================================
         # METODE EAN (Entry Age Normal)
         # ==========================================
-        # NC: Tetap (Level Cost)
         nc_ean_x = NC_EAN_FIXED 
-        
-        # AL: Metode Rasio
-        if (N_entry - N_r) != 0:
-            ratio_progress = (N_entry - N_x) / (N_entry - N_r)
-            al_ean_x = PVFB_x * ratio_progress
-        else:
-            al_ean_x = Decimal(0)
+        al_ean_x = PVFB_x - (nc_ean_x * anuitas_x_term)
 
         # ==========================================
-        # METODE AAN (Attained Age Normal) - UPDATED
+        # METODE AAN (Attained Age Normal)
         # ==========================================
-        # NC AAN: PVFB_entry / Anuitas_sisa
-        # (Analisis CSV: NC naik karena Anuitas_sisa mengecil, tapi pembilang tetap PVFB_entry)
         if anuitas_x_term > 0:
             nc_aan_x = PVFB_at_entry / anuitas_x_term
         else:
             nc_aan_x = Decimal(0)
-            
-        # AL AAN: PVFB_x - PVFB_entry
-        # (Analisis CSV: AL tidak nol, tapi selisih antara kewajiban kini dan awal)
-        al_aan_x = PVFB_x - PVFB_at_entry
+        al_aan_x = PVFB_x - (nc_aan_x * anuitas_x_term)
 
-        # Simpan Data
+        # ==========================================
+        # METODE PUC (Projected Unit Credit)
+        # ==========================================
+        # PUC: NC = PVFB_x / (r-e)
+        # AL = ((x-e)/(r-e)) * PVFB_x
+        if r > x_entry:
+            accrual_fraction = Decimal(x_loop - x_entry) / Decimal(r - x_entry)
+            nc_puc_x = PVFB_x / Decimal(r - x_entry)
+            al_puc_x = accrual_fraction * PVFB_x
+        else:
+            accrual_fraction = Decimal(0)
+            nc_puc_x = Decimal(0)
+            al_puc_x = Decimal(0)
+
         actuarial_data.append({
             "Usia": x_loop,
             "Iuran Normal (EAN)": nc_ean_x, 
             "Iuran Normal (AAN)": nc_aan_x,
+            "Iuran Normal (PUC)": nc_puc_x,
             "Kewajiban Aktuaria (EAN)": al_ean_x,
             "Kewajiban Aktuaria (AAN)": al_aan_x,
+            "Kewajiban Aktuaria (PUC)": al_puc_x,
             "PVFB": PVFB_x
         })
 
@@ -498,48 +492,93 @@ st.caption("Dashboard interaktif untuk menghitung nilai-nilai aktuaria program d
 # --- Sidebar untuk Input ---
 with st.sidebar:
     st.header("⚙️ Parameter Simulasi")
-    
+
     st.subheader("👤 Data Peserta")
-    jenis_kelamin = st.selectbox("Jenis Kelamin", options=["Perempuan", "Laki-Laki"], key="widget_gender") 
-    
+    jenis_kelamin = st.selectbox("Jenis Kelamin", options=["Perempuan", "Laki-Laki"], key="widget_gender", help="Pilih jenis kelamin peserta sesuai TMI 2023.")
+
     col1, col2 = st.columns(2)
     with col1:
-        x_entry = st.number_input("Usia Masuk (e)", min_value=18, max_value=60, step=1, help="Usia saat peserta terdaftar program.", key="widget_entry_age") 
+        x_entry = st.number_input(
+            "Usia Masuk (e)", min_value=18, max_value=60, step=1,
+            help="Usia saat peserta mulai mengikuti program dana pensiun.", key="widget_entry_age")
     with col2:
-        x_now_min = st.session_state.get('widget_entry_age', 18) 
-        x_now = st.number_input("Usia Valuasi (x)", min_value=x_now_min, max_value=64, step=1, help="Usia saat perhitungan dilakukan.", key="widget_valuation_age")
-        
+        x_now_min = st.session_state.get('widget_entry_age', 18)
+        x_now = st.number_input(
+            "Usia Valuasi (x)", min_value=x_now_min, max_value=64, step=1,
+            help="Usia peserta saat dilakukan perhitungan aktuaria (valuasi).", key="widget_valuation_age")
+
     st.subheader("💰 Asumsi Ekonomi & Pensiun")
-    r = st.number_input("Usia Pensiun (r)", min_value=55, max_value=65, step=1, help="Usia pensiun normal.", key="widget_retirement_age")
-    gaji_masuk = st.number_input("Gaji Pokok Awal (Rp) (Se)", min_value=1_000_000, step=1_000_000, format="%d", help="Gaji tahunan saat usia masuk (e).", key="widget_initial_salary") 
-    
-    i_percent = st.slider("Suku Bunga (i) %", min_value=0.0, max_value=15.0, step=0.1, help="Asumsi tingkat hasil investasi per tahun.", key="widget_interest_rate") 
-    s_percent = st.slider("Kenaikan Gaji (s) %", min_value=0.0, max_value=15.0, step=0.1, help="Asumsi kenaikan gaji tahunan.", key="widget_salary_increase") 
-    k_percent = st.slider("Proporsi Gaji (k) %", min_value=0.0, max_value=10.0, step=0.1, help="Persentase dari gaji yang menjadi manfaat pensiun tahunan.", key="widget_benefit_prop") 
+    r = st.number_input(
+        "Usia Pensiun (r)", min_value=55, max_value=65, step=1,
+        help="Usia pensiun normal sesuai ketentuan program.", key="widget_retirement_age")
+    st.markdown("Gaji Pokok Awal (Se)")
+    col_gaji1, col_gaji2 = st.columns([0.22, 0.78])
+    with col_gaji1:
+        st.markdown('<div style="display: flex; align-items: center; height: 38px;"><span style="font-weight: bold; font-size: 16px;">Rp</span></div>', unsafe_allow_html=True)
+    with col_gaji2:
+        gaji_masuk = st.number_input(
+            label="Gaji Pokok Awal (Se) (input)", min_value=1_000_000, step=1_000_000, format="%d",
+            help="Gaji pokok tahunan peserta pada usia masuk (e).", key="widget_initial_salary", label_visibility="collapsed")
+
+    # Slider ekonomi
+    i_percent = st.slider(
+        "Suku Bunga (i) %", min_value=0.0, max_value=15.0, step=0.1,
+        help="Asumsi tingkat hasil investasi tahunan yang digunakan untuk mendiskontokan manfaat.", key="widget_interest_rate")
+    s_percent = st.slider(
+        "Kenaikan Gaji (s) %", min_value=0.0, max_value=15.0, step=0.1,
+        help="Asumsi kenaikan gaji pokok tahunan peserta selama masa kerja.", key="widget_salary_increase")
+    k_percent = st.slider(
+        "Proporsi Gaji (k) %", min_value=0.0, max_value=10.0, step=0.1,
+        help="Persentase gaji pokok yang menjadi manfaat pensiun tahunan (misal 2,5% per tahun masa kerja).", key="widget_benefit_prop")
+
+    st.button("Reset ke Default", on_click=reset_defaults, use_container_width=True, key="reset_default_btn")
+
+    current_x_now = st.session_state.get('widget_valuation_age', 40)
+    current_r = st.session_state.get('widget_retirement_age', 65)
+
+    # Toggle Opsi Target Manfaat Pensiun tepat di bawah tombol reset
+    show_target = st.toggle("Tampilkan Opsi Target Manfaat Pensiun", value=False, key="show_target_benefit")
+    if show_target:
+        st.subheader("🎯 Opsi Target Manfaat Pensiun")
+        opsi_target = st.selectbox(
+            "Gunakan Target Manfaat Pensiun?",
+            options=["Tidak", "Ya"],
+            index=0,
+            key="widget_use_target_benefit",
+            help="Pilih 'Ya' jika ingin menentukan sendiri total manfaat pensiun yang diinginkan pada usia pensiun. Jika aktif, perhitungan manfaat tidak mengikuti gaji.")
+        use_target_benefit = opsi_target == "Ya"
+        if use_target_benefit:
+            st.markdown(f"Target Total Manfaat Pensiun di Usia {r}")
+            col_target1, col_target2 = st.columns([0.22, 0.78])
+            with col_target1:
+                st.markdown('<div style="display: flex; align-items: center; height: 38px;"><span style="font-weight: bold; font-size: 16px;">Rp</span></div>', unsafe_allow_html=True)
+            with col_target2:
+                target_benefit = st.number_input(
+                    label=f"Target Total Manfaat Pensiun di Usia {r} (input)", min_value=1_000_000, step=1_000_000, format="%d",
+                    help="Isi dengan jumlah total manfaat pensiun yang diinginkan pada usia pensiun (bypass gaji).", key="widget_target_benefit", label_visibility="collapsed")
+        else:
+            target_benefit = None
+    else:
+        use_target_benefit = False
+        target_benefit = None
 
     # Ubah ke Decimal untuk perhitungan. Gunakan str() untuk presisi
     i = Decimal(str(i_percent)) / Decimal(100)
     s = Decimal(str(s_percent)) / Decimal(100)
     k = Decimal(str(k_percent)) / Decimal(100)
 
-    st.divider()
-    st.button("Reset ke Default", on_click=reset_defaults, use_container_width=True)
-
-    current_x_now = st.session_state.get('widget_valuation_age', 40)
-    current_r = st.session_state.get('widget_retirement_age', 65)
-    
     # Validasi usia
     valid = True
     if current_x_now >= current_r:
         st.error("Usia Valuasi (x) harus lebih kecil dari Usia Pensiun (r).")
         valid = False
-    if current_x_now < x_entry: # Menggunakan x_entry dari widget, bukan state
+    if current_x_now < x_entry:
         st.error("Usia Valuasi (x) tidak boleh lebih kecil dari Usia Masuk (e).")
         valid = False
-    if current_r <= x_entry: # Menggunakan x_entry dari widget, bukan state
+    if current_r <= x_entry:
         st.error("Usia Pensiun (r) harus lebih besar dari Usia Masuk (e).")
         valid = False
-    
+
     if not valid:
         st.stop()
 
@@ -562,14 +601,131 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
     k_state = Decimal(str(k_percent_state)) / Decimal(100)
     s_state = Decimal(str(s_percent_state)) / Decimal(100)
     gaji_masuk_state = Decimal(gaji_masuk_state)
-    
-    df_raw = df_perempuan_raw if jenis_kelamin_state == "Perempuan" else df_laki_raw
-    
-    comm_table = build_commutation_table(df_raw, i_state, l0=100000)
 
-    metrics, df_actuarial_full = calculate_actuarial_values_excel_logic(
-        comm_table, x_entry_state, x_now_state, r_state, i_state, k_state, gaji_masuk_state, s_state
-    )
+    # Cek apakah menggunakan target manfaat pensiun
+    use_target_benefit_state = st.session_state.get('widget_use_target_benefit', False)
+    target_benefit_state = st.session_state.get('widget_target_benefit', None)
+
+    df_raw = df_perempuan_raw if jenis_kelamin_state == "Perempuan" else df_laki_raw
+
+    # Jika target manfaat diaktifkan, override gaji dan k
+    if use_target_benefit_state and target_benefit_state is not None and target_benefit_state > 0:
+        # Hitung B_r langsung dari input target
+        # Untuk konsistensi, gaji_masuk_state tetap dipakai untuk perhitungan lain jika diperlukan
+        # k_state diabaikan
+        custom_B_r = Decimal(target_benefit_state)
+        # Pastikan comm_table sudah didefinisikan sebelum dipakai
+        comm_table = build_commutation_table(df_raw, i_state, l0=100000)
+        # Buat fungsi pengganti untuk calculate_actuarial_values_excel_logic
+        def calculate_actuarial_values_with_target(comm_table, x_entry, x_now, r, i, k, gaji_masuk, s):
+            # Panggil fungsi asli tapi override B_r
+            # Salin kode aslinya, tapi ganti B_r
+            # --- 1. Mapping Data Komutasi ---
+            D = comm_table.set_index('x')['Dx'].to_dict()
+            N = comm_table.set_index('x')['Nx'].to_dict()
+            def get_D(x): return D.get(x, Decimal(0))
+            def get_N(x): return N.get(x, Decimal(0))
+            metrics = {}
+            actuarial_data = []
+            D_entry = get_D(x_entry)
+            N_entry = get_N(x_entry)
+            D_r = get_D(r)
+            N_r = get_N(r)
+            # B_r override
+            B_r = custom_B_r
+            metrics['B_r'] = B_r
+            metrics['Sr_minus_1'] = Decimal(0)  # Tidak relevan
+            # PVFB_e = Br * (Dr / De)
+            if D_entry > 0:
+                PVFB_at_entry = B_r * (D_r / D_entry)
+            else:
+                PVFB_at_entry = Decimal(0)
+            metrics['PVFB_entry_AAN'] = PVFB_at_entry
+            pembilang_annuitas = N_entry - N_r
+            if D_entry > 0 and pembilang_annuitas != 0:
+                NC_EAN_FIXED = PVFB_at_entry * (D_entry / pembilang_annuitas)
+            else:
+                NC_EAN_FIXED = Decimal(0)
+            for x_loop in range(x_entry, r):
+                D_x = get_D(x_loop)
+                N_x = get_N(x_loop)
+                if D_x > 0:
+                    PVFB_x = B_r * (D_r / D_x)
+                    anuitas_x_term = (N_x - N_r) / D_x
+                else:
+                    PVFB_x = Decimal(0)
+                    anuitas_x_term = Decimal(0)
+                nc_ean_x = NC_EAN_FIXED
+                al_ean_x = PVFB_x - (nc_ean_x * anuitas_x_term)
+                if anuitas_x_term > 0:
+                    nc_aan_x = PVFB_at_entry / anuitas_x_term
+                else:
+                    nc_aan_x = Decimal(0)
+                al_aan_x = PVFB_x - (nc_aan_x * anuitas_x_term)
+                if r > x_entry:
+                    accrual_fraction = Decimal(x_loop - x_entry) / Decimal(r - x_entry)
+                    nc_puc_x = PVFB_x / Decimal(r - x_entry)
+                    al_puc_x = accrual_fraction * PVFB_x
+                else:
+                    accrual_fraction = Decimal(0)
+                    nc_puc_x = Decimal(0)
+                    al_puc_x = Decimal(0)
+                actuarial_data.append({
+                    "Usia": x_loop,
+                    "Iuran Normal (EAN)": nc_ean_x,
+                    "Iuran Normal (AAN)": nc_aan_x,
+                    "Iuran Normal (PUC)": nc_puc_x,
+                    "Kewajiban Aktuaria (EAN)": al_ean_x,
+                    "Kewajiban Aktuaria (AAN)": al_aan_x,
+                    "Kewajiban Aktuaria (PUC)": al_puc_x,
+                    "PVFB": PVFB_x
+                })
+            df_actuarial_full = pd.DataFrame(actuarial_data)
+            # Output dashboard (Usia Valuasi)
+            metrics['PVFB_x_now'] = B_r * (get_D(r) / get_D(x_now)) if get_D(x_now) > 0 else Decimal(0)
+            try:
+                row_now = df_actuarial_full[df_actuarial_full['Usia'] == x_now]
+                if not row_now.empty:
+                    metrics['NC_ean_now'] = row_now['Iuran Normal (EAN)'].values[0]
+                    metrics['AL_ean_now'] = row_now['Kewajiban Aktuaria (EAN)'].values[0]
+                    metrics['AL_aan_now'] = row_now['Kewajiban Aktuaria (AAN)'].values[0]
+                    metrics['NC_aan_x_now'] = row_now['Iuran Normal (AAN)'].values[0]
+                else:
+                    raise IndexError
+            except IndexError:
+                metrics['NC_ean_now'] = Decimal(0)
+                metrics['AL_ean_now'] = Decimal(0)
+                metrics['AL_aan_now'] = Decimal(0)
+                metrics['NC_aan_x_now'] = Decimal(0)
+            NA_ean = Decimal(0)
+            NA_aan = Decimal(0)
+            if not df_actuarial_full.empty:
+                for index, row in df_actuarial_full.iterrows():
+                    umur_iuran = row['Usia']
+                    if umur_iuran < r:
+                        interest_factor = (Decimal(1) + i)**(r - umur_iuran)
+                        NA_ean += row['Iuran Normal (EAN)'] * interest_factor
+                        NA_aan += row['Iuran Normal (AAN)'] * interest_factor
+            metrics['NA_ean_total'] = NA_ean
+            metrics['NA_aan_total'] = NA_aan
+            # NA PUC
+            NA_puc = Decimal(0)
+            if not df_actuarial_full.empty:
+                for index, row in df_actuarial_full.iterrows():
+                    umur_iuran = row['Usia']
+                    if umur_iuran < r:
+                        interest_factor = (Decimal(1) + i)**(r - umur_iuran)
+                        NA_puc += row['Iuran Normal (PUC)'] * interest_factor
+            metrics['NA_puc_total'] = NA_puc
+            return metrics, df_actuarial_full
+        metrics, df_actuarial_full = calculate_actuarial_values_with_target(
+            comm_table, x_entry_state, x_now_state, r_state, i_state, k_state, gaji_masuk_state, s_state
+        )
+    else:
+        comm_table = build_commutation_table(df_raw, i_state, l0=100000)
+        metrics, df_actuarial_full = calculate_actuarial_values_excel_logic(
+            comm_table, x_entry_state, x_now_state, r_state, i_state, k_state, gaji_masuk_state, s_state
+        )
 
     # Metrics
     B_r = metrics.get('B_r', Decimal(0))
@@ -582,13 +738,16 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
     NA_aan_total = metrics.get('NA_aan_total', Decimal(0))
     AL_ilp_x_now = metrics.get('AL_ean_now', Decimal(0))
     AL_aan_x_now = metrics.get('AL_aan_now', Decimal(0))
-    
-    NA_ean_term_first = metrics.get('NA_ean_term_first', Decimal(0))
-    NA_ean_term_second = metrics.get('NA_ean_term_second', Decimal(0))
-    NA_ean_term_last = metrics.get('NA_ean_term_last', Decimal(0))
-    NA_aan_term_first = metrics.get('NA_aan_term_first', Decimal(0))
-    NA_aan_term_second = metrics.get('NA_aan_term_second', Decimal(0))
-    NA_aan_term_last = metrics.get('NA_aan_term_last', Decimal(0))
+    # PUC
+    # Ambil dari df_actuarial_full
+    NC_puc_now = Decimal(0)
+    AL_puc_now = Decimal(0)
+    if not df_actuarial_full.empty:
+        row_now = df_actuarial_full[df_actuarial_full['Usia'] == x_now_state]
+        if not row_now.empty:
+            NC_puc_now = row_now['Iuran Normal (PUC)'].values[0]
+            AL_puc_now = row_now['Kewajiban Aktuaria (PUC)'].values[0]
+
 
     # Nilai Komutasi
     if comm_table is not None and not comm_table.empty:
@@ -610,25 +769,57 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
         anuitas_now_formula, anuitas_entry_formula, anuitas_entry_to_now_formula = (Decimal(0),) * 3
 
     # --- 6. TAMPILKAN OUTPUT ---
-    
+
+    # Ambil nilai NA_ean_term_first, NA_ean_term_second, NA_ean_term_last, NA_aan_term_first, NA_aan_term_second, NA_aan_term_last dari metrics
+    NA_ean_term_first = metrics.get('NA_ean_term_first', Decimal(0))
+    NA_ean_term_second = metrics.get('NA_ean_term_second', Decimal(0))
+    NA_ean_term_last = metrics.get('NA_ean_term_last', Decimal(0))
+    NA_aan_term_first = metrics.get('NA_aan_term_first', Decimal(0))
+    NA_aan_term_second = metrics.get('NA_aan_term_second', Decimal(0))
+    NA_aan_term_last = metrics.get('NA_aan_term_last', Decimal(0))
+
+    # Hitung NA_puc_total dan term jika belum ada di metrics
+    NA_puc_total = Decimal(0)
+    NA_puc_term_first = Decimal(0)
+    NA_puc_term_second = Decimal(0)
+    NA_puc_term_last = Decimal(0)
+    if not df_actuarial_full.empty:
+        for idx, row in df_actuarial_full.iterrows():
+            umur_iuran = row['Usia']
+            if umur_iuran < r_state:
+                interest_factor = (Decimal(1) + i_state)**(r_state - umur_iuran)
+                NA_puc_total += row['Iuran Normal (PUC)'] * interest_factor
+                if idx == 0:
+                    NA_puc_term_first = row['Iuran Normal (PUC)'] * ((Decimal(1) + i_state)**(r_state - umur_iuran))
+                elif idx == 1:
+                    NA_puc_term_second = row['Iuran Normal (PUC)'] * ((Decimal(1) + i_state)**(r_state - umur_iuran))
+                elif umur_iuran == r_state - 1:
+                    NA_puc_term_last = row['Iuran Normal (PUC)'] * ((Decimal(1) + i_state)**1)
+
     # Helper function untuk format Rupiah (presisi 2) - UNTUK UI
+    import locale
     def format_rp(val):
         if not isinstance(val, Decimal):
             val = Decimal(str(val))
-        return f"Rp {val:,.2f}" 
+        # Format: ribuan titik, desimal koma
+        s = f"{val:,.2f}"
+        s = s.replace(",", "_").replace(".", ",").replace("_", ".")
+        return f"Rp {s}"
     
     # Helper function untuk format angka (presisi 7) - UNTUK TAB FORMULA
     def format_calc(val):
         if not isinstance(val, Decimal):
             val = Decimal(str(val))
-        return f"{val:,.7f}"
+        s = f"{val:,.7f}"
+        s = s.replace(",", "_").replace(".", ",").replace("_", ".")
+        return s
     
     # Helper function untuk format angka tanpa koma (untuk LaTeX)
     def format_latex_num(val):
-         if not isinstance(val, Decimal):
+        if not isinstance(val, Decimal):
             val = Decimal(str(val))
-         # Hasilkan string angka dengan 7 desimal tanpa koma
-         return f"{val:.7f}"
+        # Hasilkan string angka dengan 7 desimal, gunakan titik untuk LaTeX
+        return f"{val:.7f}"
 
     tab_summary, tab_formula, tab_commutation = st.tabs([
         "📊 Ringkasan & Detail", 
@@ -639,21 +830,30 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
     # --- ISI TAB SUMMARY ---
     with tab_summary:
         st.header(f"📈 Ringkasan Hasil Perhitungan (Usia Valuasi: {x_now_state})")
-        st.caption(f"Perhitungan menggunakan metode **Entry Age Normal (EAN)** dan **Attained Age Normal (AAN)**.")
+        st.caption(f"Perhitungan menggunakan metode **Entry Age Normal (EAN)**, **Attained Age Normal (AAN)**, dan **Projected Unit Credit (PUC)**.")
         st.divider()
 
         st.subheader("Nilai Aktuaria Utama")
-        col_s1, col_s2 = st.columns(2)
+        # Baris 1: Manfaat Pensiun Tahunan dan Nilai Sekarang Manfaat
+        col_s1, col_s2, col_s3 = st.columns(3)
         with col_s1:
             st.metric("Manfaat Pensiun Tahunan (Br)", format_rp(B_r), help=f"Dihitung: {k_state*100:.1f}% x {r_state-x_entry_state} thn x Gaji Akhir Proyeksi ({format_rp(Sr_minus_1)})")
-            st.metric(f"Nilai Sekarang Manfaat (PVFB)", format_rp(PVFB_x_now), help=f"Present value manfaat pensiun di usia {x_now_state}.")
         with col_s2:
+            st.metric(f"Nilai Sekarang Manfaat (PVFB)", format_rp(PVFB_x_now), help=f"Present value manfaat pensiun di usia {x_now_state}.")
+        # col_s3 dibiarkan kosong
+
+        # Baris 2: Nilai Akhir Total Iuran EAN, AAN, PUC
+        col_s4, col_s5, col_s6 = st.columns(3)
+        with col_s4:
             st.metric("Nilai Akhir Total Iuran EAN", format_rp(NA_ean_total), help=f"Akumulasi iuran EAN hingga usia {r_state}.")
+        with col_s5:
             st.metric("Nilai Akhir Total Iuran AAN", format_rp(NA_aan_total), help=f"Akumulasi iuran AAN hingga usia {r_state}.")
+        with col_s6:
+            st.metric("Nilai Akhir Total Iuran PUC", format_rp(NA_puc_total), help=f"Akumulasi iuran PUC hingga usia {r_state}.")
         
         st.divider()
         st.subheader(f"Detail Metode di Usia {x_now_state}")
-        col_m1, col_m2 = st.columns(2)
+        col_m1, col_m2, col_m3 = st.columns(3)
         with col_m1:
             st.markdown("##### Entry Age Normal (EAN)")
             st.metric(f"Iuran Normal (NC)", format_rp(NC_ilp_now), help="Iuran tahunan pada usia valuasi.") 
@@ -662,6 +862,10 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
             st.markdown("##### Attained Age Normal (AAN)")
             st.metric(f"Iuran Normal (NC)", format_rp(NC_aan_x_now), help="Iuran tahunan saat ini.")
             st.metric(f"Kewajiban Aktuaria (AL)", format_rp(AL_aan_x_now), help="Target dana terkumpul saat ini.")
+        with col_m3:
+            st.markdown("##### Projected Unit Credit (PUC)")
+            st.metric(f"Iuran Normal (NC)", format_rp(NC_puc_now), help="Iuran normal tahun berjalan metode PUC.")
+            st.metric(f"Kewajiban Aktuaria (AL)", format_rp(AL_puc_now), help="Kewajiban aktuaria metode PUC.")
 
         st.divider()
 
@@ -671,7 +875,7 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
             df_chart_data = df_actuarial_full.astype(float)
             
             st.markdown("##### Perbandingan Pola Iuran Normal Tahunan")
-            df_chart_nc = df_chart_data[['Usia', 'Iuran Normal (AAN)', 'Iuran Normal (EAN)']].melt('Usia', var_name='Metode', value_name='Iuran Tahunan')
+            df_chart_nc = df_chart_data[['Usia', 'Iuran Normal (AAN)', 'Iuran Normal (EAN)', 'Iuran Normal (PUC)']].melt('Usia', var_name='Metode', value_name='Iuran Tahunan')
             
             try:
                 y_max = df_chart_nc['Iuran Tahunan'].max()
@@ -696,7 +900,7 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
             st.altair_chart(chart_nc, use_container_width=True)
 
             st.markdown("##### Perbandingan Grafik Kewajiban Aktuaria")
-            df_chart_al = df_chart_data[['Usia', 'Kewajiban Aktuaria (AAN)', 'Kewajiban Aktuaria (EAN)']].melt('Usia', var_name='Metode', value_name='Kewajiban Aktuaria')
+            df_chart_al = df_chart_data[['Usia', 'Kewajiban Aktuaria (AAN)', 'Kewajiban Aktuaria (EAN)', 'Kewajiban Aktuaria (PUC)']].melt('Usia', var_name='Metode', value_name='Kewajiban Aktuaria')
 
             try:
                 y_max_al = df_chart_al['Kewajiban Aktuaria'].max()
@@ -720,31 +924,42 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
             ).interactive()
             st.altair_chart(chart_al, use_container_width=True)
 
+
             # --- Ringkasan Interpretasi ---
             st.subheader("💡 Ringkasan Interpretasi")
-            
-            # Interpretasi Pola Grafik
-            interpretation_graph = "Seperti terlihat di grafik, iuran **AAN** (putih) dimulai lebih rendah namun akan **meningkat tajam** menjelang usia pensiun. Iuran **EAN** (biru) memiliki pola kenaikan yang **lebih landai dan stabil**."
-            
-            # Interpretasi Nilai Akhir
-            if NA_ean_total < NA_aan_total:
-                interpretation_na = f"Metode **EAN** lebih menguntungkan bagi **peserta**, karena total iuran yang dibayarkan hingga pensiun **lebih rendah** ({format_rp(NA_ean_total)}) dibandingkan AAN ({format_rp(NA_aan_total)})."
-            else:
-                interpretation_na = f"Metode **AAN** lebih menguntungkan bagi **peserta**, karena total iuran yang dibayarkan hingga pensiun **lebih rendah** ({format_rp(NA_aan_total)}) dibandingkan EAN ({format_rp(NA_ean_total)})."
 
-            # Interpretasi Kewajiban Aktuaria
-            if AL_ilp_x_now > AL_aan_x_now:
-                interpretation_al = f"Metode **EAN** menargetkan dana terkumpul (Kewajiban Aktuaria) **lebih besar** saat ini ({format_rp(AL_ilp_x_now)}) dibandingkan AAN ({format_rp(AL_aan_x_now)}). Ini menunjukkan pendanaan yang lebih cepat dan lebih aman dari sisi **penyelenggara**."
+            # Interpretasi Pola Grafik (EAN, AAN, PUC)
+            interpretation_graph = (
+                "Pada grafik, iuran **AAN** (putih) dimulai paling rendah namun meningkat tajam menjelang pensiun. "
+                "Iuran **EAN** (biru) naik lebih landai dan stabil. "
+                "Iuran **PUC** (hijau) cenderung naik secara bertahap, mengikuti akumulasi masa kerja, dan berada di antara EAN dan AAN pada sebagian besar usia."
+            )
+
+            # Interpretasi Nilai Akhir (Total Biaya)
+            if NA_ean_total <= NA_aan_total and NA_ean_total <= NA_puc_total:
+                interpretation_na = f"Metode **EAN** menghasilkan total iuran terendah ({format_rp(NA_ean_total)}), diikuti **PUC** ({format_rp(NA_puc_total)}), lalu **AAN** ({format_rp(NA_aan_total)})."
+            elif NA_puc_total <= NA_ean_total and NA_puc_total <= NA_aan_total:
+                interpretation_na = f"Metode **PUC** menghasilkan total iuran terendah ({format_rp(NA_puc_total)}), diikuti **EAN** ({format_rp(NA_ean_total)}), lalu **AAN** ({format_rp(NA_aan_total)})."
             else:
-                interpretation_al = f"Metode **AAN** menargetkan dana terkumpul (Kewajiban Aktuaria) **lebih besar** saat ini ({format_rp(AL_aan_x_now)}) dibandingkan EAN ({format_rp(AL_ilp_x_now)})."
+                interpretation_na = f"Metode **AAN** menghasilkan total iuran terendah ({format_rp(NA_aan_total)}), diikuti **PUC** ({format_rp(NA_puc_total)}), lalu **EAN** ({format_rp(NA_ean_total)})."
+
+            # Interpretasi Kewajiban Aktuaria Saat Ini
+            if AL_ilp_x_now >= AL_aan_x_now and AL_ilp_x_now >= AL_puc_now:
+                interpretation_al = f"Kewajiban Aktuaria terbesar saat ini adalah **EAN** ({format_rp(AL_ilp_x_now)}), diikuti **AAN** ({format_rp(AL_aan_x_now)}), lalu **PUC** ({format_rp(AL_puc_now)})."
+            elif AL_aan_x_now >= AL_ilp_x_now and AL_aan_x_now >= AL_puc_now:
+                interpretation_al = f"Kewajiban Aktuaria terbesar saat ini adalah **AAN** ({format_rp(AL_aan_x_now)}), diikuti **EAN** ({format_rp(AL_ilp_x_now)}), lalu **PUC** ({format_rp(AL_puc_now)})."
+            else:
+                interpretation_al = f"Kewajiban Aktuaria terbesar saat ini adalah **PUC** ({format_rp(AL_puc_now)}), diikuti **EAN** ({format_rp(AL_ilp_x_now)}), lalu **AAN** ({format_rp(AL_aan_x_now)})."
 
             # Interpretasi Iuran Normal Saat Ini
-            if NC_ilp_now < NC_aan_x_now:
-                interpretation_nc = f"Pada usia {x_now_state} saat ini, iuran tahunan **EAN** ({format_rp(NC_ilp_now)}) **lebih rendah** daripada iuran AAN ({format_rp(NC_aan_x_now)})."
+            if NC_ilp_now <= NC_aan_x_now and NC_ilp_now <= NC_puc_now:
+                interpretation_nc = f"Iuran normal saat ini paling rendah: **EAN** ({format_rp(NC_ilp_now)}), lalu **PUC** ({format_rp(NC_puc_now)}), lalu **AAN** ({format_rp(NC_aan_x_now)})."
+            elif NC_puc_now <= NC_ilp_now and NC_puc_now <= NC_aan_x_now:
+                interpretation_nc = f"Iuran normal saat ini paling rendah: **PUC** ({format_rp(NC_puc_now)}), lalu **EAN** ({format_rp(NC_ilp_now)}), lalu **AAN** ({format_rp(NC_aan_x_now)})."
             else:
-                interpretation_nc = f"Pada usia {x_now_state} saat ini, iuran tahunan **AAN** ({format_rp(NC_aan_x_now)}) **lebih rendah** daripada iuran EAN ({format_rp(NC_ilp_now)})."
+                interpretation_nc = f"Iuran normal saat ini paling rendah: **AAN** ({format_rp(NC_aan_x_now)}), lalu **PUC** ({format_rp(NC_puc_now)}), lalu **EAN** ({format_rp(NC_ilp_now)})."
 
-            st.markdown("Berikut adalah kesimpulan utama dari perbandingan kedua metode:")
+            st.markdown("Berikut adalah kesimpulan utama dari perbandingan ketiga metode:")
             st.markdown(f"* **Pola Iuran:** {interpretation_graph}")
             st.markdown(f"* **Total Biaya (Nilai Akhir):** {interpretation_na}")
             st.markdown(f"* **Kewajiban Saat Ini (Usia {x_now_state}):** {interpretation_al}")
@@ -753,7 +968,17 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
             st.divider() # Pemisah sebelum tabel rinci
 
             st.markdown("##### Tabel Rinci Perhitungan per Usia")
-            cols_to_show = ['PVFB', 'Iuran Normal (EAN)', 'Kewajiban Aktuaria (EAN)', 'Iuran Normal (AAN)', 'Kewajiban Aktuaria (AAN)']
+            cols_to_show = [
+                'PVFB',
+                'Iuran Normal (EAN)',
+                'Iuran Normal (AAN)',
+                'Iuran Normal (PUC)',
+                'Kewajiban Aktuaria (EAN)',
+                'Kewajiban Aktuaria (AAN)',
+                'Kewajiban Aktuaria (PUC)'
+            ]
+            
+            df_display = df_actuarial_full.set_index('Usia')[cols_to_show]
             df_display = df_actuarial_full.set_index('Usia')[cols_to_show]
             
             def highlight_row(row):
@@ -806,7 +1031,7 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
 
         # --- 3. IURAN NORMAL ---
         st.subheader(f"3. Iuran Normal (NC) di Usia {x_now_state}")
-        col1_f, col2_f = st.columns(2)
+        col1_f, col2_f, col3_f = st.columns(3)
         with col1_f:
             st.markdown("**Metode EAN**")
             st.metric(f"Iuran Normal (NC)", format_rp(NC_ilp_now), help="Iuran tahunan EAN.")
@@ -820,7 +1045,6 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
                  latex_nc_ean_mid = rf"^{{EAN~{r_state}}}(NC)_{{{x_now_state}}} = \frac{{{format_calc(Dx_now)}}}{{{format_calc(Nx_now - Nx_r)}}} \times {format_calc(PVFB_x_now)}"
                  st.latex(latex_nc_ean_mid)
                  st.latex(rf"^{{EAN~{r_state}}}(NC)_{{{x_now_state}}} = {format_calc(NC_ilp_now)}")
-                 
         with col2_f:
             st.markdown("**Metode AAN**")
             st.metric(f"Iuran Normal (NC)", format_rp(NC_aan_x_now), help="Iuran tahunan AAN.")
@@ -834,12 +1058,21 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
                  latex_nc_aan_mid = rf"^{{AAN~{r_state}}}(NC)_{{{x_now_state}}} = \frac{{{format_calc(PVFB_entry_AAN)}}}{{{format_calc(anuitas_now_formula)}}}"
                  st.latex(latex_nc_aan_mid)
                  st.latex(rf"^{{AAN~{r_state}}}(NC)_{{{x_now_state}}} = {format_calc(NC_aan_x_now)}")
+        with col3_f:
+            st.markdown("**Metode PUC**")
+            st.metric(f"Iuran Normal (NC)", format_rp(NC_puc_now), help="Iuran normal tahun berjalan metode PUC.")
+            with st.expander("Lihat Detail Formula NC PUC"):
+                st.latex(r"^{PUC~r}(NC)_x = \frac{{}^{r}(PVFB)_x}{r-e}")
+                st.markdown(f"**Perhitungan di Usia {x_now_state}:**")
+                st.latex(rf"^{{PUC~{r_state}}}(NC)_{{{x_now_state}}} = \frac{{{{}}^{{{r_state}}}(PVFB)_{{{x_now_state}}}}}{{{r_state}-{x_entry_state}}}")
+                st.latex(rf"^{{PUC~{r_state}}}(NC)_{{{x_now_state}}} = \frac{{{format_calc(PVFB_x_now)}}}{{{r_state-x_entry_state}}}")
+                st.latex(rf"^{{PUC~{r_state}}}(NC)_{{{x_now_state}}} = {format_calc(NC_puc_now)}")
 
         st.divider()
 
         # --- 4. KEWAJIBAN AKTUARIA ---
         st.subheader(f"4. Kewajiban Aktuaria (AL) di Usia {x_now_state}")
-        col3_f, col4_f = st.columns(2)
+        col3_f, col4_f, col5_f = st.columns(3)
         with col3_f:
             st.markdown("**Metode EAN**")
             st.metric(f"Kewajiban Aktuaria (AL)", format_rp(AL_ilp_x_now), help="Target dana EAN.")
@@ -853,7 +1086,6 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
                  latex_al_ean_mid = rf"^{{EAN~{r_state}}}(AL)_{{{x_now_state}}} = \frac{{{format_calc(anuitas_entry_to_now_formula)}}}{{{format_calc(anuitas_entry_formula)}}} \times {format_calc(PVFB_x_now)}"
                  st.latex(latex_al_ean_mid)
                  st.latex(rf"^{{EAN~{r_state}}}(AL)_{{{x_now_state}}} = {format_calc(AL_ilp_x_now)}")
-
         with col4_f:
             st.markdown("**Metode AAN**")
             st.metric(f"Kewajiban Aktuaria (AL)", format_rp(AL_aan_x_now), help="Target dana AAN.")
@@ -865,12 +1097,21 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
                  latex_al_aan_mid = rf"^{{AAN~{r_state}}}(AL)_{{{x_now_state}}} = {format_calc(PVFB_x_now)} - ({format_calc(NC_aan_x_now)} \times {format_calc(anuitas_now_formula)})"
                  st.latex(latex_al_aan_mid)
                  st.latex(rf"^{{AAN~{r_state}}}(AL)_{{{x_now_state}}} = {format_calc(AL_aan_x_now)}")
+        with col5_f:
+            st.markdown("**Metode PUC**")
+            st.metric(f"Kewajiban Aktuaria (AL)", format_rp(AL_puc_now), help="Kewajiban aktuaria metode PUC.")
+            with st.expander("Lihat Detail Formula AL PUC"):
+                st.latex(r"^{PUC~r}(AL)_x = \frac{x-e}{r-e} \times {}^{r}(PVFB)_x")
+                st.markdown(f"**Perhitungan di Usia {x_now_state}:**")
+                st.latex(rf"^{{PUC~{r_state}}}(AL)_{{{x_now_state}}} = \frac{{{x_now_state}-{x_entry_state}}}{{{r_state}-{x_entry_state}}} \times {{}}^{{{r_state}}}(PVFB)_{{{x_now_state}}}")
+                st.latex(rf"^{{PUC~{r_state}}}(AL)_{{{x_now_state}}} = \frac{{{x_now_state-x_entry_state}}}{{{r_state-x_entry_state}}} \times {format_calc(PVFB_x_now)}")
+                st.latex(rf"^{{PUC~{r_state}}}(AL)_{{{x_now_state}}} = {format_calc(AL_puc_now)}")
 
         st.divider()
         
 # --- 5. NILAI AKHIR ---
         st.subheader("5. Nilai Akhir Total Iuran (NA) di Usia Pensiun")
-        col1_na, col2_na = st.columns(2)
+        col1_na, col2_na, col3_na = st.columns(3)
         with col1_na:
             st.metric("Hasil NA EAN", format_rp(NA_ean_total), help="Akumulasi iuran EAN.")
             with st.expander("Lihat Detail Formula NA EAN"):
@@ -883,7 +1124,6 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
                 st.latex(rf"{{}}^{{EAN}}NA = {{}}^{{EAN}}(NC)_{{{x_entry_state}}} (1+{format_latex_num(i_state)})^{{{term1_power}}} + {{}}^{{EAN}}(NC)_{{{x_entry_state+1}}} (1+{format_latex_num(i_state)})^{{{term2_power}}} + \dots + {{}}^{{EAN}}(NC)_{{{x_last}}} (1+{format_latex_num(i_state)})^{{1}}")
                 st.latex(rf"{{}}^{{EAN}}NA = {format_calc(NA_ean_term_first)} + {format_calc(NA_ean_term_second)} + \dots + {format_calc(NA_ean_term_last)}")
                 st.latex(rf"{{}}^{{EAN}}NA = {format_calc(NA_ean_total)}")
-        
         with col2_na:
             st.metric("Hasil NA AAN", format_rp(NA_aan_total), help="Akumulasi iuran AAN.")
             with st.expander("Lihat Detail Formula NA AAN"):
@@ -896,6 +1136,32 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
                 st.latex(rf"{{}}^{{AAN}}NA = {{}}^{{AAN}}(NC)_{{{x_entry_state}}} (1+{format_latex_num(i_state)})^{{{term1_power}}} + {{}}^{{AAN}}(NC)_{{{x_entry_state+1}}} (1+{format_latex_num(i_state)})^{{{term2_power}}} + \dots + {{}}^{{AAN}}(NC)_{{{x_last}}} (1+{format_latex_num(i_state)})^{{1}}")
                 st.latex(rf"{{}}^{{AAN}}NA = {format_calc(NA_aan_term_first)} + {format_calc(NA_aan_term_second)} + \dots + {format_calc(NA_aan_term_last)}")
                 st.latex(rf"{{}}^{{AAN}}NA = {format_calc(NA_aan_total)}")
+        with col3_na:
+            # Hitung NA PUC
+            NA_puc_total = Decimal(0)
+            NA_puc_term_first = Decimal(0)
+            NA_puc_term_second = Decimal(0)
+            NA_puc_term_last = Decimal(0)
+            if not df_actuarial_full.empty:
+                for idx, row in df_actuarial_full.iterrows():
+                    umur_iuran = row['Usia']
+                    if umur_iuran < r_state:
+                        interest_factor = (Decimal(1) + i_state)**(r_state - umur_iuran)
+                        NA_puc_total += row['Iuran Normal (PUC)'] * interest_factor
+                        if idx == 0:
+                            NA_puc_term_first = row['Iuran Normal (PUC)'] * ((Decimal(1) + i_state)**(r_state - umur_iuran))
+                        elif idx == 1:
+                            NA_puc_term_second = row['Iuran Normal (PUC)'] * ((Decimal(1) + i_state)**(r_state - umur_iuran))
+                        elif umur_iuran == r_state - 1:
+                            NA_puc_term_last = row['Iuran Normal (PUC)'] * ((Decimal(1) + i_state)**1)
+            st.metric("Hasil NA PUC", format_rp(NA_puc_total), help="Akumulasi iuran PUC.")
+            with st.expander("Lihat Detail Formula NA PUC"):
+                st.markdown("**Metode Projected Unit Credit**")
+                st.latex(r"{}^{PUC}NA = \sum_{x=e}^{r-1} \, {}^{PUC}(NC)_x (1+i)^{r-x}")
+                st.latex(rf"{{}}^{{PUC}}NA = \sum_{{x={x_entry_state}}}^{{{r_state-1}}} \, {{}}^{{PUC}}(NC)_x (1 + {format_latex_num(i_state)})^{{{r_state}-x}}")
+                st.latex(rf"{{}}^{{PUC}}NA = {{}}^{{PUC}}(NC)_{{{x_entry_state}}} (1+{format_latex_num(i_state)})^{{{r_state-x_entry_state}}} + {{}}^{{PUC}}(NC)_{{{x_entry_state+1}}} (1+{format_latex_num(i_state)})^{{{r_state-(x_entry_state+1)}}} + \dots + {{}}^{{PUC}}(NC)_{{{r_state-1}}} (1+{format_latex_num(i_state)})^1")
+                st.latex(rf"{{}}^{{PUC}}NA = {format_calc(NA_puc_term_first)} + {format_calc(NA_puc_term_second)} + \dots + {format_calc(NA_puc_term_last)}")
+                st.latex(rf"{{}}^{{PUC}}NA = {format_calc(NA_puc_total)}")
 
     # --- ISI TAB TABEL KOMUTASI ---
     with tab_commutation:
@@ -908,8 +1174,7 @@ if df_laki_raw is not None and df_perempuan_raw is not None:
 
         with st.expander("📝 Keterangan"):
             st.markdown(r"""
-            Berikut adalah definisi dan formula matematika untuk variabel yang digunakan dalam tabel ini:
-
+            Berikut adalah penjelasan dari setiap kolom yang terdapat dalam tabel komutasi:
             * **$x$ (Usia):** Usia peserta dalam tahun berjalan.
             * **$q_x$ (Peluang Meninggal):** Probabilitas seseorang berusia $x$ akan meninggal dalam 1 tahun ke depan (Data TMI).
             * **$p_x$ (Peluang Hidup):** Probabilitas seseorang berusia $x$ akan tetap hidup hingga usia $x+1$.
